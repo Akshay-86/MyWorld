@@ -4,14 +4,14 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 const WORLD_SIZE = 600; 
 const NUM_HOUSES = 25;
-const NUM_TREES = 200;
+const NUM_TREES = 800; // Dense forest
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); 
 scene.fog = new THREE.FogExp2(0x87CEEB, 0.006);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 40, 90);
+camera.position.set(0, 30, 60);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -23,6 +23,13 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
+controls.minDistance = 3;
+controls.maxDistance = 500; // Allow zooming far out for shift+drag travel, then back in to house level
+
+// --- Custom WASD / Arrow Key Navigation ---
+const keysPressed = {};
+window.addEventListener('keydown', (e) => { keysPressed[e.code] = true; });
+window.addEventListener('keyup', (e) => { keysPressed[e.code] = false; }); 
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
@@ -144,30 +151,81 @@ function createPathBetween(p1, p2) {
     const dx = p2.x - p1.x;
     const dz = p2.z - p1.z;
     const dist = Math.sqrt(dx*dx + dz*dz);
-    
-    const points = [];
-    points.push(new THREE.Vector3(p1.x, getTerrainHeight(p1.x, p1.z) + 0.2, p1.z));
-    const mx = (p1.x + p2.x)/2 + (Math.random() - 0.5) * 10;
-    const mz = (p1.z + p2.z)/2 + (Math.random() - 0.5) * 10;
-    points.push(new THREE.Vector3(mx, getTerrainHeight(mx, mz) + 0.2, mz));
-    points.push(new THREE.Vector3(p2.x, getTerrainHeight(p2.x, p2.z) + 0.2, p2.z));
-    
-    const curve = new THREE.CatmullRomCurve3(points);
-    const geo = new THREE.TubeGeometry(curve, 20, 1.5, 8, false);
-    geo.scale(1, 0.1, 1); 
-    const mat = new THREE.MeshStandardMaterial({ color: 0x5D4037, roughness: 1.0 }); 
-    const path = new THREE.Mesh(geo, mat);
-    path.receiveShadow = true;
-    scene.add(path);
+    const segments = Math.max(4, Math.floor(dist / 3));
+    const roadWidth = 1.8;
 
+    // Build a list of center points along the path
+    const centerPoints = [];
+    for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const noiseX = Math.sin(t * Math.PI) * (Math.random() - 0.5) * 3;
+        const noiseZ = Math.sin(t * Math.PI) * (Math.random() - 0.5) * 3;
+        const cx = p1.x + dx * t + noiseX;
+        const cz = p1.z + dz * t + noiseZ;
+        centerPoints.push({ x: cx, z: cz });
+    }
+
+    // Build flat ribbon geometry: two vertices per center point (left & right)
+    const vertices = [];
+    const indices = [];
+    for (let i = 0; i <= segments; i++) {
+        const cp = centerPoints[i];
+        // Calculate perpendicular direction
+        let dirX, dirZ;
+        if (i < segments) {
+            dirX = centerPoints[i + 1].x - cp.x;
+            dirZ = centerPoints[i + 1].z - cp.z;
+        } else {
+            dirX = cp.x - centerPoints[i - 1].x;
+            dirZ = cp.z - centerPoints[i - 1].z;
+        }
+        const len = Math.sqrt(dirX * dirX + dirZ * dirZ) || 1;
+        // Perpendicular (rotate 90 degrees)
+        const perpX = -dirZ / len * roadWidth;
+        const perpZ = dirX / len * roadWidth;
+
+        const lx = cp.x + perpX;
+        const lz = cp.z + perpZ;
+        const rx = cp.x - perpX;
+        const rz = cp.z - perpZ;
+
+        // Place vertices directly on terrain surface + tiny offset to avoid z-fighting
+        vertices.push(lx, getTerrainHeight(lx, lz) + 0.12, lz);
+        vertices.push(rx, getTerrainHeight(rx, rz) + 0.12, rz);
+
+        // Build two triangles per quad segment
+        if (i < segments) {
+            const base = i * 2;
+            indices.push(base, base + 1, base + 2);
+            indices.push(base + 1, base + 3, base + 2);
+        }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x5D4037, roughness: 1.0, side: THREE.DoubleSide
+    });
+    const road = new THREE.Mesh(geo, mat);
+    road.receiveShadow = true;
+    scene.add(road);
+
+    // Scatter small rocks along the road edges
     if (loadedModels.smallRock) {
-        for(let i=0; i<dist/5; i++) {
-            const t = Math.random();
-            const pt = curve.getPoint(t);
+        for (let i = 0; i < dist / 6; i++) {
+            const idx = Math.floor(Math.random() * centerPoints.length);
+            const cp = centerPoints[idx];
             const rock = loadedModels.smallRock.clone();
             const sc = 0.5 + Math.random();
             rock.scale.set(sc, sc, sc);
-            rock.position.set(pt.x + (Math.random()-0.5)*5, getTerrainHeight(pt.x, pt.z)-0.2, pt.z + (Math.random()-0.5)*5);
+            const side = Math.random() > 0.5 ? 1 : -1;
+            const rx = cp.x + side * (roadWidth + 0.5 + Math.random() * 2);
+            const rz = cp.z + side * (roadWidth + 0.5 + Math.random() * 2);
+            rock.position.set(rx, getTerrainHeight(rx, rz) - 0.2, rz);
+            rock.rotation.y = Math.random() * Math.PI * 2;
             scene.add(rock);
         }
     }
@@ -221,7 +279,7 @@ function spawnWorld() {
         }
     }
 
-    // Connect houses with paths
+    // Connect houses with paths perfectly hugging terrain
     for (let i = 0; i < housePositions.length; i++) {
         let nearestDist = Infinity;
         let nearestIdx = -1;
@@ -232,14 +290,16 @@ function spawnWorld() {
             const d = Math.sqrt(dx*dx + dz*dz);
             if (d < nearestDist) { nearestDist = d; nearestIdx = j; }
         }
-        if (nearestIdx !== -1 && nearestDist < 100) {
+        if (nearestIdx !== -1 && nearestDist < 120) {
             createPathBetween(housePositions[i], housePositions[nearestIdx]);
         }
     }
 
+    // Dense forests, fewer dead trees
     for (let i = 0; i < NUM_TREES; i++) {
         if (!loadedModels.tree1) break;
-        const keys = ['tree1', 'tree2', 'tree3', 'tree4', 'deadTree'];
+        // 12:1 ratio of living trees to dead trees
+        const keys = ['tree1', 'tree1', 'tree1', 'tree2', 'tree2', 'tree2', 'tree3', 'tree3', 'tree3', 'tree4', 'tree4', 'tree4', 'deadTree'];
         const treeKey = keys[Math.floor(Math.random() * keys.length)];
         const tree = loadedModels[treeKey].clone();
         const scale = 2 + Math.random() * 3;
@@ -249,9 +309,9 @@ function spawnWorld() {
             x = (Math.random() - 0.5) * WORLD_SIZE;
             z = (Math.random() - 0.5) * WORLD_SIZE;
             attempts++;
-        } while (attempts < 50 && (Math.sqrt(x*x + z*z) < 35 || checkCollision(x, z, 4))); 
-        if (attempts < 50) {
-            placedObjects.push({x, z, radius: 4});
+        } while (attempts < 30 && (Math.sqrt(x*x + z*z) < 35 || checkCollision(x, z, 2))); 
+        if (attempts < 30) {
+            placedObjects.push({x, z, radius: 2});
             tree.position.set(x, getTerrainHeight(x, z), z);
             scene.add(tree);
         }
@@ -260,6 +320,16 @@ function spawnWorld() {
 
 async function initModelsAndSpawn() {
     const basePath = '/models/Ultimate Stylized Nature - May 2022/glTF/';
+    const progressBar = document.getElementById('load-progress');
+    const allKeys = Object.keys(assetNames);
+    const totalSteps = allKeys.length + 2; // +2 for kenney fence and rock
+    let loaded = 0;
+
+    function updateProgress() {
+        loaded++;
+        if (progressBar) progressBar.style.width = Math.round((loaded / totalSteps) * 100) + '%';
+    }
+
     try {
         const promises = Object.entries(assetNames).map(async ([key, filename]) => {
             const gltf = await loader.loadAsync(basePath + filename);
@@ -268,6 +338,7 @@ async function initModelsAndSpawn() {
                 if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
             });
             loadedModels[key] = scene;
+            updateProgress();
         });
         await Promise.all(promises);
 
@@ -276,11 +347,13 @@ async function initModelsAndSpawn() {
         const fenceGltf = await loader.loadAsync(fencePath);
         fenceGltf.scene.traverse((child) => { if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }});
         loadedModels['fence'] = fenceGltf.scene;
+        updateProgress();
 
         const rockPath = '/models/kenney_nature-kit/Models/GLTF format/rock_smallA.glb';
         const rockGltf = await loader.loadAsync(rockPath);
         rockGltf.scene.traverse((child) => { if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }});
         loadedModels['smallRock'] = rockGltf.scene;
+        updateProgress();
 
     } catch (e) {
         console.error("Failed to load models, using fallbacks", e);
@@ -304,52 +377,25 @@ async function initModelsAndSpawn() {
         }
     };
 
-    spawnScatter('bush', 150, 1.5, 3.0);
-    spawnScatter('bush2', 100, 1.5, 3.0);
-    spawnScatter('grass', 800, 1.0, 2.5);
-    spawnScatter('flowerR', 80, 1.0, 2.0);
-    spawnScatter('flowerY', 80, 1.0, 2.0);
-    spawnScatter('flowerP', 80, 1.0, 2.0);
+    // Dense undergrowth to make it feel like a real forest
+    spawnScatter('bush', 400, 1.5, 3.0);
+    spawnScatter('bush2', 300, 1.5, 3.0);
+    spawnScatter('grass', 2000, 1.0, 2.5);
+    spawnScatter('flowerR', 200, 1.0, 2.0);
+    spawnScatter('flowerY', 200, 1.0, 2.0);
+    spawnScatter('flowerP', 200, 1.0, 2.0);
+
+    // Hide Loading Screen
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) {
+        loadingScreen.style.opacity = '0';
+        setTimeout(() => {
+            loadingScreen.style.display = 'none';
+        }, 1200);
+    }
 }
 
 initModelsAndSpawn();
-
-// --- Interactivity Setup ---
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-const targetMarkerGeo = new THREE.ConeGeometry(0.5, 1.5, 8);
-targetMarkerGeo.rotateX(Math.PI);
-const targetMarkerMat = new THREE.MeshBasicMaterial({ color: 0xFFEB3B });
-const targetMarker = new THREE.Mesh(targetMarkerGeo, targetMarkerMat);
-targetMarker.visible = false;
-scene.add(targetMarker);
-
-let movingHuman = null;
-let targetPos = null;
-
-window.addEventListener('click', (event) => {
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    if (terrainMesh) {
-        const intersects = raycaster.intersectObject(terrainMesh);
-        if (intersects.length > 0) {
-            targetPos = intersects[0].point;
-            targetMarker.position.copy(targetPos);
-            targetMarker.position.y += 2;
-            targetMarker.visible = true;
-            
-            let closestDist = Infinity;
-            humans.forEach(h => {
-                const d = h.position.distanceTo(targetPos);
-                if (d < closestDist) {
-                    closestDist = d;
-                    movingHuman = h;
-                }
-            });
-        }
-    }
-});
 
 window.addEventListener('resize', onWindowResize, false);
 function onWindowResize() {
@@ -360,34 +406,41 @@ function onWindowResize() {
 
 function animate() {
     requestAnimationFrame(animate);
+
+    // --- WASD / Arrow Key movement ---
+    const moveSpeed = 1.5;
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+
+    if (keysPressed['KeyW'] || keysPressed['ArrowUp']) {
+        controls.target.addScaledVector(forward, moveSpeed);
+        camera.position.addScaledVector(forward, moveSpeed);
+    }
+    if (keysPressed['KeyS'] || keysPressed['ArrowDown']) {
+        controls.target.addScaledVector(forward, -moveSpeed);
+        camera.position.addScaledVector(forward, -moveSpeed);
+    }
+    if (keysPressed['KeyA'] || keysPressed['ArrowLeft']) {
+        controls.target.addScaledVector(right, -moveSpeed);
+        camera.position.addScaledVector(right, -moveSpeed);
+    }
+    if (keysPressed['KeyD'] || keysPressed['ArrowRight']) {
+        controls.target.addScaledVector(right, moveSpeed);
+        camera.position.addScaledVector(right, moveSpeed);
+    }
+
     controls.update();
     
     const time = Date.now() * 0.001;
     
-    if (movingHuman && targetPos) {
-        const dir = new THREE.Vector3().subVectors(targetPos, movingHuman.position);
-        dir.y = 0; 
-        if (dir.length() > 0.5) {
-            dir.normalize();
-            movingHuman.position.addScaledVector(dir, 0.2); 
-            movingHuman.rotation.y = Math.atan2(dir.x, dir.z);
-        } else {
-            targetMarker.visible = false; 
-            movingHuman = null;
-        }
-    }
-
+    // Idle animation for humans
     humans.forEach((human, index) => {
         const baseHeight = getTerrainHeight(human.position.x, human.position.z);
-        const isWalking = (human === movingHuman);
-        const bobSpeed = isWalking ? 15 : 2;
-        const bobHeight = isWalking ? 0.3 : 0.1;
-        human.position.y = baseHeight + 0.7 + Math.sin(time * bobSpeed + index) * bobHeight;
+        human.position.y = baseHeight + 0.7 + Math.sin(time * 2 + index) * 0.1;
     });
-    
-    if (targetMarker.visible) {
-        targetMarker.position.y = targetPos.y + 2 + Math.sin(time * 5) * 0.2;
-    }
 
     renderer.render(scene, camera);
 }

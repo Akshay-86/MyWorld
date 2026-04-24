@@ -7,10 +7,25 @@
     <link rel="stylesheet" href="./style.css">
   </head>
   <body>
-    <!-- The Three.js canvas will be injected or appended to the body -->
+    <div id="loading-screen">
+      <div class="loader-content">
+        <div class="tree-animation">
+          <div class="trunk"></div>
+          <div class="canopy c1"></div>
+          <div class="canopy c2"></div>
+          <div class="canopy c3"></div>
+        </div>
+        <h2>Growing Your World</h2>
+        <p class="loader-sub">Planting trees, carving paths, building homes...</p>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="load-progress"></div>
+        </div>
+        <p class="loader-hint">Use <b>WASD</b> or <b>Arrow Keys</b> to explore &bull; <b>Scroll</b> to zoom &bull; <b>Drag</b> to rotate</p>
+      </div>
+    </div>
     <div id="ui-overlay">
       <h1>My World</h1>
-      <p id="status-text">Phase 1: Foundation (Placeholder Models)</p>
+      <p id="status-text">Explore the infinite forest</p>
     </div>
     <script type="module" src="./main.js"></script>
   </body>

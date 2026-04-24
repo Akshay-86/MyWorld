@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #87CEEB; /* Sky blue */
+  font-family: 'Inter', sans-serif;
+}
+
+#ui-overlay {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  color: white;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 15px 25px;
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  pointer-events: none; /* Let clicks pass through to the canvas */
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+#ui-overlay h1 {
+  margin: 0 0 5px 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+#ui-overlay p {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.9;
+}

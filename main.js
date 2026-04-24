@@ -24,7 +24,25 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
 controls.minDistance = 3;
-controls.maxDistance = 500; // Allow zooming far out for shift+drag travel, then back in to house level
+controls.maxDistance = 500;
+controls.zoomSpeed = 2.0;
+controls.screenSpacePanning = true;
+
+// Fix zoom direction: always zoom toward where the camera is looking at on the ground
+const zoomRaycaster = new THREE.Raycaster();
+renderer.domElement.addEventListener('wheel', () => {
+    // After OrbitControls processes the wheel, update target to where camera looks at terrain
+    requestAnimationFrame(() => {
+        if (!terrainMesh) return;
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        zoomRaycaster.set(camera.position, dir);
+        const hits = zoomRaycaster.intersectObject(terrainMesh);
+        if (hits.length > 0) {
+            controls.target.copy(hits[0].point);
+        }
+    });
+});
 
 // --- Custom WASD / Arrow Key Navigation ---
 const keysPressed = {};

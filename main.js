@@ -17,6 +17,7 @@ const PONDS = [
     { x: 90,   z: -160, radius: 18, depth: 6 },
     { x: -180, z: 130,  radius: 22, depth: 7 },
     { x: 145,  z: -20,  radius: 35, depth: 10 }, // Waterfall splash pond
+    { x: 195,  z: -20,  radius: 30, depth: 8 },  // Waterfall source pond (Upper Lake)
 ];
 
 // ============================================================
@@ -85,22 +86,46 @@ dirLight.shadow.camera.bottom = -300;
 scene.add(dirLight);
 
 // ============================================================
-//  TERRAIN (multi-pond)
+//  TERRAIN (multi-pond + Mountain & Pass)
 // ============================================================
 function getTerrainHeight(x, z) {
     let y = Math.sin(x * 0.05) * Math.cos(z * 0.05) * 4;
     y += Math.sin(x * 0.02) * Math.cos(z * 0.02) * 8;
 
+    // --- ISLAND / BOWL EFFECT ---
+    const distFromCenter = Math.max(Math.abs(x), Math.abs(z));
+    const edgeStart = (WORLD_SIZE / 2) * 0.7; 
+    if (distFromCenter > edgeStart) {
+        const t = (distFromCenter - edgeStart) / ((WORLD_SIZE / 2) - edgeStart);
+        y += t * t * 50; 
+    }
+
     // --- CLIFF / PLATEAU ---
-    // Add noise to the edge so it's not a straight line
     const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
     const cliffEdge = 160 + cliffNoise;
 
+    // --- MOUNTAIN PASS (The Way Up) ---
+    // At z ≈ 60, we create a much wider ramp (60 units instead of 12)
+    const passZ = 60;
+    const passRange = 40;
+    const distToPass = Math.abs(z - passZ);
+    let rampWidth = 12;
+    if (distToPass < passRange) {
+        const passT = 1.0 - (distToPass / passRange);
+        rampWidth = 12 + (passT * 50); // Becomes a 62-unit long ramp
+    }
+
     if (x > cliffEdge) {
         const plateauHeight = 35;
-        const rampWidth = 12; // More natural steepness
         const t = Math.min(1, Math.max(0, (x - cliffEdge) / rampWidth));
         y += (t * t * (3 - 2 * t)) * plateauHeight;
+    }
+
+    // --- MOUNTAIN PEAK (River Source) ---
+    if (x > 230) {
+        const peakHeight = 40;
+        const pt = (x - 230) / 70;
+        y += pt * pt * peakHeight;
     }
 
     for (const pond of PONDS) {
@@ -123,8 +148,16 @@ function isInsideAnyPond(x, z, margin = 0) {
 function isOnCliff(x, z) {
     const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
     const cliffEdge = 160 + cliffNoise;
-    // The cliff slope is between cliffEdge and cliffEdge + rampWidth (12)
-    return (x > cliffEdge - 2 && x < cliffEdge + 14);
+    // Slope varies by rampWidth now
+    const passZ = 60;
+    const distToPass = Math.abs(z - passZ);
+    const rw = distToPass < 40 ? 12 + (1 - distToPass/40) * 50 : 12;
+    return (x > cliffEdge - 2 && x < cliffEdge + rw + 2);
+}
+
+const groundRaycaster = new THREE.Raycaster();
+function getYOnTerrain(x, z) {
+    return getTerrainHeight(x, z) - 0.1;
 }
 
 function createTerrain() {
@@ -135,7 +168,8 @@ function createTerrain() {
     const positions = geometry.attributes.position;
     const colors = [];
     const colorGrass = new THREE.Color(0x4CAF50);
-    const colorRock = new THREE.Color(0x795548); // Brownish rock
+    const colorRock = new THREE.Color(0x795548); 
+    const colorPath = new THREE.Color(0x8D6E63); // Lighter path color
     
     for (let i = 0; i < positions.count; i++) {
         const x = positions.getX(i);
@@ -143,13 +177,17 @@ function createTerrain() {
         const y = getTerrainHeight(x, z);
         positions.setY(i, y);
         
-        // Color based on slope/cliff
         const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
         const cliffEdge = 160 + cliffNoise;
         
-        // If we are in the steep transition zone, paint it rock
-        if (x > cliffEdge + 1 && x < cliffEdge + 11) {
-            const lerpVal = Math.random() * 0.3; // Add some variation
+        // Pass zone coloring (Visual path up the ramp)
+        const isPass = Math.abs(z - 60) < 10 && x > cliffEdge && x < cliffEdge + 60;
+
+        if (isPass) {
+            colors.push(colorPath.r, colorPath.g, colorPath.b);
+        } else if (isOnCliff(x, z) && Math.abs(z - 60) > 30) {
+            // Only show rock on steep cliffs, not on the pass
+            const lerpVal = Math.random() * 0.3;
             const mixedColor = colorRock.clone().lerp(new THREE.Color(0x5D4037), lerpVal);
             colors.push(mixedColor.r, mixedColor.g, mixedColor.b);
         } else {
@@ -180,20 +218,150 @@ const waterMat = new THREE.MeshStandardMaterial({
     metalness: 0.3, 
     side: THREE.DoubleSide,
     flatShading: true,
-    depthWrite: true // Crucial: ensure transparent water writes to/respects depth buffer
+    depthWrite: true 
 });
 
 const waterMeshes = [];
+let riverCurve; 
 
-function createPondWater(pond) {
-    // The center of the bowl is the deepest point.
-    // We fill the bowl ~60% of the way up from center to rim.
-    const centerY = getTerrainHeight(pond.x, pond.z); // deepest
-    const waterY = centerY + pond.depth * 0.6;
+// Shared Water Levels
+const PLATEAU_WATER_LEVEL = 34.8; // Flush with plateau
+
+let riverEndPos = new THREE.Vector3(164, 34.8, -20); // Global for waterfall reset
+
+function createRiver() {
+    // Waypoints for the meandering path
+    const waypoints = [
+        new THREE.Vector3(295, 0, -50),
+        new THREE.Vector3(275, 0, -10),
+        new THREE.Vector3(255, 0, -40),
+        new THREE.Vector3(235, 0, -15),
+        new THREE.Vector3(215, 0, -30),
+        new THREE.Vector3(195, 0, -20),
+        new THREE.Vector3(180, 0, -12),
+        new THREE.Vector3(173, 0, -20) // Cliff Edge
+    ];
+
+    const spline = new THREE.CatmullRomCurve3(waypoints);
+    const riverWidth = 5.6; 
+    const segments = 200; 
+    const centerPoints = spline.getPoints(segments);
     
-    const size = pond.radius * 2.2;
-    const geo = new THREE.PlaneGeometry(size, size, 16, 16);
-    geo.rotateX(-Math.PI / 2);
+    const lastCP = centerPoints[segments];
+    const upperPondHeight = getPondRimHeight(PONDS[6]) - 0.1;
+    riverEndPos.set(lastCP.x, upperPondHeight, lastCP.z);
+
+    const vertices = [];
+    const indices = [];
+
+    for (let i = 0; i <= segments; i++) {
+        const cp = centerPoints[i];
+        let ddx, ddz;
+        if (i < segments) { ddx = centerPoints[i + 1].x - cp.x; ddz = centerPoints[i + 1].z - cp.z; }
+        else { ddx = cp.x - centerPoints[i - 1].x; ddz = cp.z - centerPoints[i - 1].z; }
+        
+        const len = Math.sqrt(ddx * ddx + ddz * ddz) || 1;
+        const perpX = -ddz / len * riverWidth;
+        const perpZ = ddx / len * riverWidth;
+        
+        const lx = cp.x + perpX, lz = cp.z + perpZ;
+        const rx = cp.x - perpX, rz = cp.z - perpZ;
+        
+        // INTEGRATED HEIGHT LOGIC:
+        let hL = getTerrainHeight(lx, lz) + 0.4;
+        let hR = getTerrainHeight(rx, rz) + 0.4;
+
+        // Sample ponds to lock river height to pond surface
+        for (let pIdx = 0; pIdx < PONDS.length; pIdx++) {
+            const pond = PONDS[pIdx];
+            const distL = Math.sqrt((lx - pond.x)**2 + (lz - pond.z)**2);
+            const distR = Math.sqrt((rx - pond.x)**2 + (rz - pond.z)**2);
+            if (distL < pond.radius + 2 || distR < pond.radius + 2) {
+                const pH = getPondRimHeight(pond) - 0.1;
+                hL = Math.min(hL, pH);
+                hR = Math.min(hR, pH);
+                break;
+            }
+        }
+        
+        vertices.push(lx, hL, lz);
+        vertices.push(rx, hR, rz);
+        
+        if (i < segments) {
+            const base = i * 2;
+            indices.push(base, base + 1, base + 2);
+            indices.push(base + 1, base + 3, base + 2);
+        }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const river = new THREE.Mesh(geo, waterMat);
+    scene.add(river);
+    waterMeshes.push(river);
+
+    // River Source (Spring)
+    const sourcePos = waypoints[0];
+    const sourceGeo = new THREE.CircleGeometry(12, 16);
+    sourceGeo.rotateX(-Math.PI / 2);
+    const source = new THREE.Mesh(sourceGeo, waterMat);
+    source.position.set(sourcePos.x, getTerrainHeight(sourcePos.x, sourcePos.z) + 0.5, sourcePos.z);
+    scene.add(source);
+    waterMeshes.push(source);
+}
+
+function getPondRimHeight(pond) {
+    let minHeight = Infinity;
+    const r = pond.radius + 0.8; 
+    for (let i = 0; i < 24; i++) {
+        const angle = (i / 24) * Math.PI * 2;
+        const h = getTerrainHeight(pond.x + Math.cos(angle) * r, pond.z + Math.sin(angle) * r);
+        if (h < minHeight) minHeight = h;
+    }
+    return minHeight;
+}
+
+function createPondWater(pond, index) {
+    const waterY = getPondRimHeight(pond) - 0.1;
+    const segments = 64;
+    // We use a slightly smaller radius to avoid z-fighting with the rim
+    const geo = new THREE.CylinderGeometry(pond.radius * 0.98, pond.radius * 0.98, 1, segments, 1);
+    
+    const pos = geo.attributes.position;
+    
+    // Explicitly find min/max Y to avoid any coordinate system confusion
+    let minY = 1000, maxY = -1000;
+    for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i);
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+    const threshold = (minY + maxY) / 2;
+
+    for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        const y = pos.getY(i);
+        
+        const worldX = x + pond.x;
+        const worldZ = z + pond.z;
+        
+        if (y > threshold) {
+            // TOP SURFACE: Must be perfectly flat
+            pos.setY(i, 0); 
+        } else {
+            // BOTTOM SURFACE: Must follow the carved terrain
+            // We sample slightly inside to ensure we hit the "bowl" part of the terrain
+            const terrainY = getTerrainHeight(worldX, worldZ);
+            pos.setY(i, terrainY - waterY);
+        }
+    }
+    
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
     
     const water = new THREE.Mesh(geo, waterMat);
     water.position.set(pond.x, waterY, pond.z);
@@ -202,36 +370,75 @@ function createPondWater(pond) {
     waterMeshes.push(water);
 }
 
-PONDS.forEach(p => createPondWater(p));
+PONDS.forEach((p, i) => createPondWater(p, i));
+createRiver();
 
 // ============================================================
-//  WATERFALL — Falling cubes particle system
+//  WATERFALL — Curved Particle Path
 // ============================================================
 const waterfallCubes = [];
+
+function createWaterfallPath(startX, startY, startZ) {
+    const points = [];
+    const lowerPond = PONDS[5];
+    const splashY = getTerrainHeight(lowerPond.x, lowerPond.z) + lowerPond.depth * 0.75;
+    
+    // Calculate the cliff parameters to hug the face
+    const cliffNoise = Math.sin(startZ * 0.05) * 8 + Math.cos(startZ * 0.1) * 4;
+    const cliffEdge = 160 + cliffNoise;
+    const passZ = 60;
+    const distToPass = Math.abs(startZ - passZ);
+    const rw = distToPass < 40 ? 12 + (1 - distToPass/40) * 50 : 12;
+
+    // 1. Top Point
+    points.push(new THREE.Vector3(startX, startY, startZ));
+    
+    // 2. The Lip (Hug the cliff curve)
+    const lipY = startY - 4;
+    const lipX = cliffEdge + (rw * 0.1); 
+    points.push(new THREE.Vector3(lipX, lipY, startZ));
+    
+    // 3. The Face (Middle drop, hugging the base of the rock)
+    const midY = (startY + splashY) / 2;
+    const midX = cliffEdge + (rw * 0.02); 
+    points.push(new THREE.Vector3(midX, midY, startZ));
+    
+    // 4. The Splash
+    points.push(new THREE.Vector3(cliffEdge - 3, splashY, startZ));
+    
+    return new THREE.CatmullRomCurve3(points);
+}
+
 function createWaterfall() {
-    const cubeGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+    const cubeGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6); 
     const cubeMat = new THREE.MeshStandardMaterial({ 
         color: 0x4FC3F7, 
         transparent: true, 
-        opacity: 0.8, 
+        opacity: 0.7, 
         flatShading: true,
-        depthWrite: true 
+        depthWrite: false 
     });
-    for (let i = 0; i < 40; i++) {
+
+    for (let i = 0; i < 150; i++) { // High density
         const cube = new THREE.Mesh(cubeGeo, cubeMat);
-        resetWaterfallCube(cube);
-        cube.position.y = Math.random() * 50; // Stagger initial fall
+        
+        // Randomize spawn along river width
+        const jitterZ = (Math.random() - 0.5) * 5.4;
+        const jitterX = (Math.random() - 0.5) * 1.5;
+        const startX = riverEndPos.x + jitterX;
+        const startY = riverEndPos.y + 0.2;
+        const startZ = riverEndPos.z + jitterZ;
+
+        cube.userData.path = createWaterfallPath(startX, startY, startZ);
+        cube.userData.progress = Math.random(); 
+        cube.userData.speed = 0.006 + Math.random() * 0.006;
+        
+        const s = 0.5 + Math.random() * 1.5;
+        cube.scale.set(s, s, s);
+        
         scene.add(cube);
         waterfallCubes.push(cube);
     }
-}
-
-function resetWaterfallCube(cube) {
-    const zPos = -20 + (Math.random() - 0.5) * 20;
-    // Align with the new wavy cliff edge
-    const cliffNoise = Math.sin(zPos * 0.05) * 8 + Math.cos(zPos * 0.1) * 4;
-    const xPos = 160 + cliffNoise + 4; // Drop slightly off the edge
-    cube.position.set(xPos, 48, zPos); 
 }
 
 createWaterfall();
@@ -366,8 +573,8 @@ function createPathBetween(p1, p2) {
         const perpZ = ddx / len * roadWidth;
         const lx = cp.x + perpX, lz = cp.z + perpZ;
         const rx = cp.x - perpX, rz = cp.z - perpZ;
-        vertices.push(lx, getTerrainHeight(lx, lz) + 0.12, lz);
-        vertices.push(rx, getTerrainHeight(rx, rz) + 0.12, rz);
+        vertices.push(lx, getYOnTerrain(lx, lz) + 0.12, lz);
+        vertices.push(rx, getYOnTerrain(rx, rz) + 0.12, rz);
         if (i < segments) {
             const base = i * 2;
             indices.push(base, base + 1, base + 2);
@@ -397,7 +604,7 @@ function createPathBetween(p1, p2) {
         const rx = cp.x + side * (roadWidth + 0.5 + Math.random() * 2);
         const rz = cp.z + side * (roadWidth + 0.5 + Math.random() * 2);
         roadRockTransforms.push({
-            x: rx, y: getTerrainHeight(rx, rz) - 0.2, z: rz,
+            x: rx, y: getYOnTerrain(rx, rz) - 0.2, z: rz,
             scale: 0.5 + Math.random(), rotY: Math.random() * Math.PI * 2
         });
     }
@@ -424,7 +631,7 @@ function spawnWorld() {
 
         if (attempts < 80) {
             placedObjects.push({ x, z, radius: 8 });
-            const y = getTerrainHeight(x, z);
+            const y = getTerrainHeight(x, z) - 0.1;
             house.position.set(x, y, z);
             house.rotation.y = Math.random() * Math.PI * 2;
             scene.add(house);
@@ -436,7 +643,7 @@ function spawnWorld() {
             offsets.forEach((off, idx) => {
                 const fx = x + off[0], fz = z + off[1];
                 fenceTransforms.push({
-                    x: fx, y: getTerrainHeight(fx, fz), z: fz,
+                    x: fx, y: getYOnTerrain(fx, fz), z: fz,
                     scale: 2, rotY: idx < 2 ? Math.PI / 2 : 0
                 });
             });
@@ -448,7 +655,7 @@ function spawnWorld() {
                 const dist = 4 + Math.random() * 2;
                 const hX = x + Math.cos(angle) * dist;
                 const hZ = z + Math.sin(angle) * dist;
-                human.position.set(hX, getTerrainHeight(hX, hZ), hZ);
+                human.position.set(hX, getYOnTerrain(hX, hZ), hZ);
                 scene.add(human);
                 humans.push(human);
             }
@@ -469,6 +676,10 @@ function spawnWorld() {
             createPathBetween(housePositions[i], housePositions[nearestIdx]);
         }
     }
+
+    // --- MAIN ROAD TO PLATEAU (The Way Up) ---
+    // This ensures a path exists through the pass
+    createPathBetween({ x: 20, z: 60 }, { x: 220, z: 60 });
 }
 
 // ============================================================
@@ -481,7 +692,7 @@ function generateScatterTransforms(count, scaleMin, scaleMax, pondMargin = 5) {
         const z = (Math.random() - 0.5) * WORLD_SIZE;
         if (!isInsideAnyPond(x, z, pondMargin)) {
             transforms.push({
-                x, y: getTerrainHeight(x, z), z,
+                x, y: getTerrainHeight(x, z) - 0.1, z,
                 scale: scaleMin + Math.random() * (scaleMax - scaleMin),
                 rotY: Math.random() * Math.PI * 2
             });
@@ -507,7 +718,7 @@ function generateTreeTransforms() {
             placedObjects.push({ x, z, radius: 2 });
             const key = keys[Math.floor(Math.random() * keys.length)];
             transforms[key].push({
-                x, y: getTerrainHeight(x, z), z,
+                x, y: getTerrainHeight(x, z) - 0.1, z,
                 scale: 2 + Math.random() * 3,
                 rotY: Math.random() * Math.PI * 2
             });
@@ -735,25 +946,43 @@ function animate() {
     // --- Water Animation ---
     waterMeshes.forEach((water) => {
         const pos = water.geometry.attributes.position;
+        const timeOffset = time * 2;
+        
         for (let i = 0; i < pos.count; i++) {
-            const px = pos.getX(i);
-            const pz = pos.getZ(i);
-            const wave = Math.sin(px * 0.4 + time * 2) * 0.25 + 
-                         Math.cos(pz * 0.4 + time * 1.5) * 0.25;
-            pos.setY(i, wave);
+            const px = pos.getX(i) + water.position.x;
+            const pz = pos.getZ(i) + water.position.z;
+            
+            // Simple wave math
+            const wave = Math.sin(px * 0.4 + timeOffset) * 0.15 + 
+                         Math.cos(pz * 0.4 + timeOffset * 0.8) * 0.15;
+            
+            // If it's a pond (CircleGeometry), we can just set Y
+            // If it's the river (TubeGeometry), we should be careful not to flatten it
+            if (water.geometry.type === 'CircleGeometry' || water.geometry.type === 'BufferGeometry') {
+                pos.setY(i, pos.getY(i) + wave * 0.1); // Jitter the existing grounded height
+            } 
         }
         pos.needsUpdate = true;
     });
 
     // --- Waterfall Animation ---
     waterfallCubes.forEach(cube => {
-        cube.position.y -= 0.85; 
+        // Update progress along the curved path
+        cube.userData.progress += cube.userData.speed;
+        
+        if (cube.userData.progress >= 1.0) {
+            cube.userData.progress = 0;
+            // Slightly vary speed on reset
+            cube.userData.speed = 0.006 + Math.random() * 0.006;
+        }
+
+        // Get the current position along the spline
+        const point = cube.userData.path.getPointAt(cube.userData.progress);
+        cube.position.copy(point);
+        
+        // Rotate while falling
         cube.rotation.x += 0.05;
         cube.rotation.y += 0.05;
-        const ground = getTerrainHeight(cube.position.x, cube.position.z);
-        if (cube.position.y < ground + 0.5) {
-            resetWaterfallCube(cube);
-        }
     });
 
     renderer.render(scene, camera);

@@ -1,2 +1,4 @@
 node_modules/
 *.blend
+public/models/
+models_backup.zip

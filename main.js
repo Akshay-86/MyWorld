@@ -16,6 +16,7 @@ const PONDS = [
     { x: -130, z: -90,  radius: 25, depth: 8 },
     { x: 90,   z: -160, radius: 18, depth: 6 },
     { x: -180, z: 130,  radius: 22, depth: 7 },
+    { x: 145,  z: -20,  radius: 35, depth: 10 }, // Waterfall splash pond
 ];
 
 // ============================================================
@@ -89,6 +90,19 @@ scene.add(dirLight);
 function getTerrainHeight(x, z) {
     let y = Math.sin(x * 0.05) * Math.cos(z * 0.05) * 4;
     y += Math.sin(x * 0.02) * Math.cos(z * 0.02) * 8;
+
+    // --- CLIFF / PLATEAU ---
+    // Add noise to the edge so it's not a straight line
+    const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
+    const cliffEdge = 160 + cliffNoise;
+
+    if (x > cliffEdge) {
+        const plateauHeight = 35;
+        const rampWidth = 12; // More natural steepness
+        const t = Math.min(1, Math.max(0, (x - cliffEdge) / rampWidth));
+        y += (t * t * (3 - 2 * t)) * plateauHeight;
+    }
+
     for (const pond of PONDS) {
         const dist = Math.sqrt((x - pond.x) ** 2 + (z - pond.z) ** 2);
         if (dist < pond.radius) {
@@ -106,16 +120,48 @@ function isInsideAnyPond(x, z, margin = 0) {
     return false;
 }
 
+function isOnCliff(x, z) {
+    const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
+    const cliffEdge = 160 + cliffNoise;
+    // The cliff slope is between cliffEdge and cliffEdge + rampWidth (12)
+    return (x > cliffEdge - 2 && x < cliffEdge + 14);
+}
+
 function createTerrain() {
-    const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 200, 200); // higher res
+    const res = 250;
+    const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, res, res);
     geometry.rotateX(-Math.PI / 2);
+    
     const positions = geometry.attributes.position;
+    const colors = [];
+    const colorGrass = new THREE.Color(0x4CAF50);
+    const colorRock = new THREE.Color(0x795548); // Brownish rock
+    
     for (let i = 0; i < positions.count; i++) {
-        positions.setY(i, getTerrainHeight(positions.getX(i), positions.getZ(i)));
+        const x = positions.getX(i);
+        const z = positions.getZ(i);
+        const y = getTerrainHeight(x, z);
+        positions.setY(i, y);
+        
+        // Color based on slope/cliff
+        const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
+        const cliffEdge = 160 + cliffNoise;
+        
+        // If we are in the steep transition zone, paint it rock
+        if (x > cliffEdge + 1 && x < cliffEdge + 11) {
+            const lerpVal = Math.random() * 0.3; // Add some variation
+            const mixedColor = colorRock.clone().lerp(new THREE.Color(0x5D4037), lerpVal);
+            colors.push(mixedColor.r, mixedColor.g, mixedColor.b);
+        } else {
+            colors.push(colorGrass.r, colorGrass.g, colorGrass.b);
+        }
     }
+    
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
+    
     const material = new THREE.MeshStandardMaterial({
-        color: 0x4CAF50, roughness: 0.8, flatShading: true
+        vertexColors: true, roughness: 0.9, flatShading: true
     });
     terrainMesh = new THREE.Mesh(geometry, material);
     terrainMesh.receiveShadow = true;
@@ -124,12 +170,20 @@ function createTerrain() {
 createTerrain();
 
 // ============================================================
-//  WATER — simple flat disc inside each bowl. Water is flat!
+//  WATER — Low-poly animated water
 // ============================================================
 const waterMat = new THREE.MeshStandardMaterial({
-    color: 0x29B6F6, transparent: true, opacity: 0.82,
-    roughness: 0.05, metalness: 0.3, side: THREE.DoubleSide
+    color: 0x29B6F6, 
+    transparent: true, 
+    opacity: 0.82,
+    roughness: 0.05, 
+    metalness: 0.3, 
+    side: THREE.DoubleSide,
+    flatShading: true,
+    depthWrite: true // Crucial: ensure transparent water writes to/respects depth buffer
 });
+
+const waterMeshes = [];
 
 function createPondWater(pond) {
     // The center of the bowl is the deepest point.
@@ -137,15 +191,50 @@ function createPondWater(pond) {
     const centerY = getTerrainHeight(pond.x, pond.z); // deepest
     const waterY = centerY + pond.depth * 0.6;
     
-    const geo = new THREE.CircleGeometry(pond.radius * 0.75, 48);
+    const size = pond.radius * 2.2;
+    const geo = new THREE.PlaneGeometry(size, size, 16, 16);
     geo.rotateX(-Math.PI / 2);
+    
     const water = new THREE.Mesh(geo, waterMat);
     water.position.set(pond.x, waterY, pond.z);
     water.receiveShadow = true;
     scene.add(water);
+    waterMeshes.push(water);
 }
 
 PONDS.forEach(p => createPondWater(p));
+
+// ============================================================
+//  WATERFALL — Falling cubes particle system
+// ============================================================
+const waterfallCubes = [];
+function createWaterfall() {
+    const cubeGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+    const cubeMat = new THREE.MeshStandardMaterial({ 
+        color: 0x4FC3F7, 
+        transparent: true, 
+        opacity: 0.8, 
+        flatShading: true,
+        depthWrite: true 
+    });
+    for (let i = 0; i < 40; i++) {
+        const cube = new THREE.Mesh(cubeGeo, cubeMat);
+        resetWaterfallCube(cube);
+        cube.position.y = Math.random() * 50; // Stagger initial fall
+        scene.add(cube);
+        waterfallCubes.push(cube);
+    }
+}
+
+function resetWaterfallCube(cube) {
+    const zPos = -20 + (Math.random() - 0.5) * 20;
+    // Align with the new wavy cliff edge
+    const cliffNoise = Math.sin(zPos * 0.05) * 8 + Math.cos(zPos * 0.1) * 4;
+    const xPos = 160 + cliffNoise + 4; // Drop slightly off the edge
+    cube.position.set(xPos, 48, zPos); 
+}
+
+createWaterfall();
 
 // ============================================================
 //  FALLBACK MODELS (Houses & Humans – kept as individual meshes, low count)
@@ -296,6 +385,11 @@ function createPathBetween(p1, p2) {
     road.receiveShadow = true;
     scene.add(road);
 
+    // Register road path to collision system so trees avoid it
+    centerPoints.forEach(p => {
+        placedObjects.push({ x: p.x, z: p.z, radius: roadWidth + 1 });
+    });
+
     // Collect rock positions (will be instanced later)
     for (let i = 0; i < dist / 6; i++) {
         const cp = centerPoints[Math.floor(Math.random() * centerPoints.length)];
@@ -326,7 +420,7 @@ function spawnWorld() {
             x = (Math.random() - 0.5) * (WORLD_SIZE - 40);
             z = (Math.random() - 0.5) * (WORLD_SIZE - 40);
             attempts++;
-        } while (attempts < 80 && (isInsideAnyPond(x, z, 10) || checkCollision(x, z, 8)));
+        } while (attempts < 80 && (isInsideAnyPond(x, z, 10) || isOnCliff(x, z) || checkCollision(x, z, 8)));
 
         if (attempts < 80) {
             placedObjects.push({ x, z, radius: 8 });
@@ -407,7 +501,7 @@ function generateTreeTransforms() {
             x = (Math.random() - 0.5) * WORLD_SIZE;
             z = (Math.random() - 0.5) * WORLD_SIZE;
             attempts++;
-        } while (attempts < 30 && (isInsideAnyPond(x, z, 5) || checkCollision(x, z, 2)));
+        } while (attempts < 30 && (isInsideAnyPond(x, z, 5) || isOnCliff(x, z) || checkCollision(x, z, 2)));
 
         if (attempts < 30) {
             placedObjects.push({ x, z, radius: 2 });
@@ -439,7 +533,18 @@ async function initModelsAndSpawn() {
         // Load Quaternius models
         const promises = Object.entries(assetNames).map(async ([key, filename]) => {
             const gltf = await loader.loadAsync(basePath + filename);
-            gltf.scene.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+            gltf.scene.traverse(c => { 
+                if (c.isMesh) { 
+                    c.castShadow = true; 
+                    c.receiveShadow = true; 
+                    if (c.material.map) { 
+                        c.material.alphaTest = 0.5;
+                        c.material.transparent = false; // TREES MUST BE OPAQUE to block depth
+                        c.material.depthWrite = true;
+                        c.material.needsUpdate = true;
+                    }
+                } 
+            });
             loadedModels[key] = gltf.scene;
             updateProgress();
         });
@@ -447,12 +552,28 @@ async function initModelsAndSpawn() {
 
         // Load Kenney fence + rock
         const fenceGltf = await loader.loadAsync('/models/kenney_nature-kit/Models/GLTF format/fence_simple.glb');
-        fenceGltf.scene.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+        fenceGltf.scene.traverse(c => { 
+            if (c.isMesh) { 
+                c.castShadow = true; 
+                c.receiveShadow = true; 
+                if (c.material.map && c.material.transparent) {
+                    c.material.alphaTest = 0.5;
+                }
+            } 
+        });
         loadedModels['fence'] = fenceGltf.scene;
         updateProgress();
 
         const rockGltf = await loader.loadAsync('/models/kenney_nature-kit/Models/GLTF format/rock_smallA.glb');
-        rockGltf.scene.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+        rockGltf.scene.traverse(c => { 
+            if (c.isMesh) { 
+                c.castShadow = true; 
+                c.receiveShadow = true; 
+                if (c.material.map && c.material.transparent) {
+                    c.material.alphaTest = 0.5;
+                }
+            } 
+        });
         loadedModels['smallRock'] = rockGltf.scene;
         updateProgress();
     } catch (e) {
@@ -530,21 +651,30 @@ const fogColorNight = new THREE.Color(0x0a1128);
 function animate() {
     requestAnimationFrame(animate);
 
-    const time = Date.now() * 0.001;
+    const now = new Date();
+    const time = now.getTime() * 0.001;
+    
+    // --- Real-World Day/Night cycle ---
+    // Calculate progress (0 to 1) based on current hours, minutes, seconds
+    const secondsSinceMidnight = (now.getHours() * 3600) + (now.getMinutes() * 60) + now.getSeconds();
+    const dayProgress = secondsSinceMidnight / 86400; 
 
-    // --- Day/Night cycle ---
-    const dayProgress = (time % DAY_DURATION) / DAY_DURATION; // 0→1 over DAY_DURATION seconds
-    const sunAngle = dayProgress * Math.PI * 2; // full circle
+    // Adjust angle: 
+    // Midnight (0.0) -> -PI/2 (Directly below)
+    // 6 AM (0.25) -> 0 (Horizon/Rise)
+    // Noon (0.5) -> PI/2 (Zenith/Up)
+    // 6 PM (0.75) -> PI (Horizon/Set)
+    const sunAngle = (dayProgress * Math.PI * 2) - (Math.PI / 2); 
 
     // Sun position: orbits overhead
     dirLight.position.set(
-        Math.cos(sunAngle) * 200,
-        Math.sin(sunAngle) * 200 + 50, // stays above horizon mostly
+        Math.cos(sunAngle) * -200, // Moves West to East
+        Math.sin(sunAngle) * 200,  // Positive is UP
         100
     );
 
     // Is the sun above the horizon?
-    const sunHeight = Math.sin(sunAngle); // -1 to 1
+    const sunHeight = Math.sin(sunAngle); 
     const isDay = sunHeight > 0;
     const t = Math.max(0, sunHeight); // 0 at horizon, 1 at zenith
 
@@ -600,6 +730,30 @@ function animate() {
     humans.forEach((human, i) => {
         const h = getTerrainHeight(human.position.x, human.position.z);
         human.position.y = h + 0.7 + Math.sin(time * 2 + i) * 0.1;
+    });
+
+    // --- Water Animation ---
+    waterMeshes.forEach((water) => {
+        const pos = water.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const px = pos.getX(i);
+            const pz = pos.getZ(i);
+            const wave = Math.sin(px * 0.4 + time * 2) * 0.25 + 
+                         Math.cos(pz * 0.4 + time * 1.5) * 0.25;
+            pos.setY(i, wave);
+        }
+        pos.needsUpdate = true;
+    });
+
+    // --- Waterfall Animation ---
+    waterfallCubes.forEach(cube => {
+        cube.position.y -= 0.85; 
+        cube.rotation.x += 0.05;
+        cube.rotation.y += 0.05;
+        const ground = getTerrainHeight(cube.position.x, cube.position.z);
+        if (cube.position.y < ground + 0.5) {
+            resetWaterfallCube(cube);
+        }
     });
 
     renderer.render(scene, camera);

@@ -35,7 +35,15 @@ An interactive, explorable 3D world featuring rolling hills, dense forests, mult
 - **Vite** — Dev server & bundler
 - **GLTF models** — Quaternius Ultimate Stylized Nature + Kenney Nature Kit
 
+## Assets
+
+The model and texture assets are also packaged as a zipped download in the GitHub Releases page. If you are setting up the project from a release bundle, download the asset zip and extract it so the `public/models/` directory is populated before running the app.
+
 ## Run Locally
+
+1. Download the asset zip from the GitHub Releases page and extract it into the project so `public/models/` contains the model files.
+2. Install dependencies.
+3. Start the dev server.
 
 ```bash
 npm install

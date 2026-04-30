@@ -316,8 +316,8 @@ function createRiver() {
 function getPondRimHeight(pond) {
     let minHeight = Infinity;
     const r = pond.radius + 0.8; 
-    for (let i = 0; i < 24; i++) {
-        const angle = (i / 24) * Math.PI * 2;
+    for (let i = 0; i < 64; i++) {
+        const angle = (i / 64) * Math.PI * 2;
         const h = getTerrainHeight(pond.x + Math.cos(angle) * r, pond.z + Math.sin(angle) * r);
         if (h < minHeight) minHeight = h;
     }
@@ -326,48 +326,39 @@ function getPondRimHeight(pond) {
 
 function createPondWater(pond, index) {
     const waterY = getPondRimHeight(pond) - 0.1;
-    const segments = 64;
-    // We use a slightly smaller radius to avoid z-fighting with the rim
-    const geo = new THREE.CylinderGeometry(pond.radius * 0.98, pond.radius * 0.98, 1, segments, 1);
-    
-    const pos = geo.attributes.position;
-    
-    // Explicitly find min/max Y to avoid any coordinate system confusion
-    let minY = 1000, maxY = -1000;
-    for (let i = 0; i < pos.count; i++) {
-        const y = pos.getY(i);
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-    }
-    const threshold = (minY + maxY) / 2;
+    const radialSegments = 64;
+    const ringSegments = 16;
 
+    // TOP SURFACE: Perfectly flat disk
+    const topGeo = new THREE.RingGeometry(0, pond.radius * 0.98, radialSegments, ringSegments);
+    topGeo.rotateX(-Math.PI / 2);
+    
+    const topMesh = new THREE.Mesh(topGeo, waterMat);
+    topMesh.position.set(pond.x, waterY, pond.z);
+    topMesh.receiveShadow = true;
+    scene.add(topMesh);
+    waterMeshes.push(topMesh);
+
+    // BOTTOM SURFACE: Subdivided disk that hugs the terrain
+    const bottomGeo = new THREE.RingGeometry(0, pond.radius * 0.98, radialSegments, ringSegments);
+    bottomGeo.rotateX(-Math.PI / 2);
+    const pos = bottomGeo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i);
         const z = pos.getZ(i);
-        const y = pos.getY(i);
-        
         const worldX = x + pond.x;
         const worldZ = z + pond.z;
-        
-        if (y > threshold) {
-            // TOP SURFACE: Must be perfectly flat
-            pos.setY(i, 0); 
-        } else {
-            // BOTTOM SURFACE: Must follow the carved terrain
-            // We sample slightly inside to ensure we hit the "bowl" part of the terrain
-            const terrainY = getTerrainHeight(worldX, worldZ);
-            pos.setY(i, terrainY - waterY);
-        }
+        const terrainY = getTerrainHeight(worldX, worldZ);
+        // Ensure bottom surface doesn't poke above top surface
+        const localY = Math.min(0, terrainY - waterY);
+        pos.setY(i, localY + 0.05);
     }
-    
-    pos.needsUpdate = true;
-    geo.computeVertexNormals();
-    
-    const water = new THREE.Mesh(geo, waterMat);
-    water.position.set(pond.x, waterY, pond.z);
-    water.receiveShadow = true;
-    scene.add(water);
-    waterMeshes.push(water);
+    bottomGeo.computeVertexNormals();
+    const bottomMesh = new THREE.Mesh(bottomGeo, waterMat);
+    bottomMesh.position.set(pond.x, waterY, pond.z);
+    bottomMesh.receiveShadow = true;
+    scene.add(bottomMesh);
+    waterMeshes.push(bottomMesh);
 }
 
 PONDS.forEach((p, i) => createPondWater(p, i));

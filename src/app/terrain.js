@@ -147,127 +147,8 @@ function createPondWater(env, pond) {
   env.waterMeshes.push(bottomMesh);
 }
 
-function createRiver(env) {
-  const waypoints = [
-    new THREE.Vector3(295, 0, -50),
-    new THREE.Vector3(275, 0, -10),
-    new THREE.Vector3(255, 0, -40),
-    new THREE.Vector3(235, 0, -15),
-    new THREE.Vector3(215, 0, -30),
-    new THREE.Vector3(195, 0, -20),
-    new THREE.Vector3(180, 0, -12),
-    new THREE.Vector3(173, 0, -20),
-  ];
+// River generation removed: rivers are disabled in this build.
 
-  const spline = new THREE.CatmullRomCurve3(waypoints);
-  const riverWidth = 5.6;
-  const segments = 200;
-  const centerPoints = spline.getPoints(segments);
-  const lastCP = centerPoints[segments];
-  const upperPondHeight = getPondRimHeight(PONDS[6]) - 0.1;
-  env.riverEndPos.set(lastCP.x, upperPondHeight, lastCP.z);
-
-  const vertices = [];
-  const indices = [];
-  for (let i = 0; i <= segments; i++) {
-    const cp = centerPoints[i];
-    let ddx;
-    let ddz;
-    if (i < segments) {
-      ddx = centerPoints[i + 1].x - cp.x;
-      ddz = centerPoints[i + 1].z - cp.z;
-    } else {
-      ddx = cp.x - centerPoints[i - 1].x;
-      ddz = cp.z - centerPoints[i - 1].z;
-    }
-
-    const len = Math.sqrt(ddx * ddx + ddz * ddz) || 1;
-    const perpX = (-ddz / len) * riverWidth;
-    const perpZ = (ddx / len) * riverWidth;
-    const lx = cp.x + perpX;
-    const lz = cp.z + perpZ;
-    const rx = cp.x - perpX;
-    const rz = cp.z - perpZ;
-
-    let hL = getTerrainHeight(lx, lz) + 0.4;
-    let hR = getTerrainHeight(rx, rz) + 0.4;
-
-    for (const pond of PONDS) {
-      const distL = Math.sqrt((lx - pond.x) ** 2 + (lz - pond.z) ** 2);
-      const distR = Math.sqrt((rx - pond.x) ** 2 + (rz - pond.z) ** 2);
-      if (distL < pond.radius + 2 || distR < pond.radius + 2) {
-        const pondHeight = getPondRimHeight(pond) - 0.1;
-        hL = Math.min(hL, pondHeight);
-        hR = Math.min(hR, pondHeight);
-        break;
-      }
-    }
-
-    vertices.push(lx, hL, lz);
-    vertices.push(rx, hR, rz);
-
-    if (i < segments) {
-      const base = i * 2;
-      indices.push(base, base + 1, base + 2);
-      indices.push(base + 1, base + 3, base + 2);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-
-  const river = new THREE.Mesh(geo, env.waterMaterial);
-  env.scene.add(river);
-  env.waterMeshes.push(river);
-
-  const sourceGeo = new THREE.CircleGeometry(12, 16);
-  sourceGeo.rotateX(-Math.PI / 2);
-  const source = new THREE.Mesh(sourceGeo, env.waterMaterial);
-  source.position.set(waypoints[0].x, getTerrainHeight(waypoints[0].x, waypoints[0].z) + 0.5, waypoints[0].z);
-  env.scene.add(source);
-  env.waterMeshes.push(source);
-}
-
-function createWaterfallPath(env, startX, startY, startZ) {
-  const lowerPond = PONDS[5];
-  const splashY = getTerrainHeight(lowerPond.x, lowerPond.z) + lowerPond.depth * 0.75;
-  const cliffNoise = Math.sin(startZ * 0.05) * 8 + Math.cos(startZ * 0.1) * 4;
-  const cliffEdge = 160 + cliffNoise;
-  const passZ = 60;
-  const distToPass = Math.abs(startZ - passZ);
-  const rw = distToPass < 40 ? 12 + (1 - distToPass / 40) * 50 : 12;
-
-  const points = [];
-  points.push(new THREE.Vector3(startX, startY, startZ));
-  points.push(new THREE.Vector3(cliffEdge + rw * 0.1, startY - 4, startZ));
-  points.push(new THREE.Vector3(cliffEdge + rw * 0.02, (startY + splashY) / 2, startZ));
-  points.push(new THREE.Vector3(cliffEdge - 3, splashY, startZ));
-  return new THREE.CatmullRomCurve3(points);
-}
-
-function createWaterfall(env) {
-  const cubeGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
-  const cubeMat = new THREE.MeshStandardMaterial({ color: 0x4FC3F7, transparent: true, opacity: 0.7, flatShading: true, depthWrite: false });
-
-  for (let i = 0; i < 150; i++) {
-    const cube = new THREE.Mesh(cubeGeo, cubeMat);
-    const jitterZ = (Math.random() - 0.5) * 5.4;
-    const jitterX = (Math.random() - 0.5) * 1.5;
-    const startX = env.riverEndPos.x + jitterX;
-    const startY = env.riverEndPos.y + 0.2;
-    const startZ = env.riverEndPos.z + jitterZ;
-
-    cube.userData.path = createWaterfallPath(env, startX, startY, startZ);
-    cube.userData.progress = Math.random();
-    cube.userData.speed = 0.006 + Math.random() * 0.006;
-    const scale = 0.5 + Math.random() * 1.5;
-    cube.scale.set(scale, scale, scale);
-    env.scene.add(cube);
-    env.waterfallCubes.push(cube);
-  }
-}
 
 export function createLandscape(env) {
   env.ponds = PONDS;
@@ -283,9 +164,11 @@ export function createLandscape(env) {
   });
 
   createTerrain(env);
-  PONDS.forEach((pond) => createPondWater(env, pond));
-  createRiver(env);
-  createWaterfall(env);
+  PONDS.forEach((pond) => {
+    if (!isOnCliff(pond.x, pond.z)) {
+      createPondWater(env, pond);
+    }
+  });
 }
 
 export function updateDayNight(env) {

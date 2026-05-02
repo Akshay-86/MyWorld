@@ -54,17 +54,7 @@ export function startAnimation(env) {
       position.needsUpdate = true;
     });
 
-    env.waterfallCubes.forEach((cube) => {
-      cube.userData.progress += cube.userData.speed;
-      if (cube.userData.progress >= 1.0) {
-        cube.userData.progress = 0;
-        cube.userData.speed = 0.006 + Math.random() * 0.006;
-      }
-      const point = cube.userData.path.getPointAt(cube.userData.progress);
-      cube.position.copy(point);
-      cube.rotation.x += 0.05;
-      cube.rotation.y += 0.05;
-    });
+    // Waterfall particles removed: no per-frame update necessary.
 
     env.renderer.render(env.scene, env.camera);
   }

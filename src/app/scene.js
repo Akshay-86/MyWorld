@@ -53,7 +53,6 @@ export function createEnvironment() {
     terrainMesh: null,
     loadedModels: {},
     waterMeshes: [],
-    waterfallCubes: [],
     humans: [],
     housePositions: [],
     placedObjects: [],

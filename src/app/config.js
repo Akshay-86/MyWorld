@@ -9,7 +9,6 @@ export const PONDS = [
   { x: 90, z: -160, radius: 18, depth: 6 },
   { x: -180, z: 130, radius: 22, depth: 7 },
   { x: 145, z: -20, radius: 35, depth: 10 },
-  { x: 195, z: -20, radius: 30, depth: 8 },
 ];
 
 export const ASSET_NAMES = {

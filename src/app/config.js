@@ -1,4 +1,4 @@
-export const WORLD_SIZE = 600;
+export const WORLD_SIZE = 1200;
 export const NUM_HOUSES = 50;
 export const NUM_TREES = 1500;
 

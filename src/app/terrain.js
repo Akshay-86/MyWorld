@@ -169,6 +169,54 @@ export function createLandscape(env) {
       createPondWater(env, pond);
     }
   });
+  createBoundaryWalls(env);
+}
+
+function createBoundaryWalls(env) {
+  const WORLD_SIZE = 1200;
+  const wallHeight = 120;
+  const wallThickness = 20;
+  const wallColor = 0x4A4A4A;
+
+  // North wall (z = -WORLD_SIZE/2)
+  const northWall = new THREE.BoxGeometry(WORLD_SIZE + 40, wallHeight, wallThickness);
+  const wallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.8, metalness: 0.1 });
+  const nWall = new THREE.Mesh(northWall, wallMat);
+  nWall.position.set(0, wallHeight / 2, -WORLD_SIZE / 2 - wallThickness / 2);
+  nWall.receiveShadow = true;
+  nWall.castShadow = true;
+  env.scene.add(nWall);
+
+  // South wall (z = WORLD_SIZE/2)
+  const sWall = new THREE.Mesh(northWall, wallMat);
+  sWall.position.set(0, wallHeight / 2, WORLD_SIZE / 2 + wallThickness / 2);
+  sWall.receiveShadow = true;
+  sWall.castShadow = true;
+  env.scene.add(sWall);
+
+  // West wall (x = -WORLD_SIZE/2)
+  const eastWestWall = new THREE.BoxGeometry(wallThickness, wallHeight, WORLD_SIZE + 80);
+  const wWall = new THREE.Mesh(eastWestWall, wallMat);
+  wWall.position.set(-WORLD_SIZE / 2 - wallThickness / 2, wallHeight / 2, 0);
+  wWall.receiveShadow = true;
+  wWall.castShadow = true;
+  env.scene.add(wWall);
+
+  // East wall (x = WORLD_SIZE/2)
+  const eWall = new THREE.Mesh(eastWestWall, wallMat);
+  eWall.position.set(WORLD_SIZE / 2 + wallThickness / 2, wallHeight / 2, 0);
+  eWall.receiveShadow = true;
+  eWall.castShadow = true;
+  env.scene.add(eWall);
+
+  // Store boundary info in env for collision detection
+  env.worldBounds = {
+    minX: -WORLD_SIZE / 2,
+    maxX: WORLD_SIZE / 2,
+    minZ: -WORLD_SIZE / 2,
+    maxZ: WORLD_SIZE / 2,
+    buffer: 15,
+  };
 }
 
 export function updateDayNight(env) {

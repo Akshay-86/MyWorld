@@ -61,6 +61,7 @@ export function createEnvironment() {
     ponds: [],
     riverEndPos: new THREE.Vector3(164, 34.8, -20),
     waterMaterial: null,
+    worldBounds: null,
   };
 
   const zoomRaycaster = new THREE.Raycaster();

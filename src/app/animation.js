@@ -32,6 +32,17 @@ export function startAnimation(env) {
       env.camera.position.addScaledVector(right, moveSpeed);
     }
 
+    // Clamp camera and target to world bounds
+    if (env.worldBounds) {
+      const b = env.worldBounds;
+      const clampX = (x) => Math.max(b.minX + b.buffer, Math.min(b.maxX - b.buffer, x));
+      const clampZ = (z) => Math.max(b.minZ + b.buffer, Math.min(b.maxZ - b.buffer, z));
+      env.camera.position.x = clampX(env.camera.position.x);
+      env.camera.position.z = clampZ(env.camera.position.z);
+      env.controls.target.x = clampX(env.controls.target.x);
+      env.controls.target.z = clampZ(env.controls.target.z);
+    }
+
     env.controls.update();
 
     env.humans.forEach((human, index) => {

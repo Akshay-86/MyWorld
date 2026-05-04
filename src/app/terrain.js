@@ -13,14 +13,14 @@ export function getTerrainHeight(x, z) {
   }
 
   const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
-  const cliffEdge = 160 + cliffNoise;
+  const cliffEdge = 120 + cliffNoise;
   const passZ = 60;
   const passRange = 40;
   const distToPass = Math.abs(z - passZ);
-  let rampWidth = 12;
+  let rampWidth = 60;
   if (distToPass < passRange) {
     const passT = 1.0 - distToPass / passRange;
-    rampWidth = 12 + passT * 50;
+    rampWidth = 60 + passT * 50;
   }
 
   if (x > cliffEdge) {
@@ -29,11 +29,7 @@ export function getTerrainHeight(x, z) {
     y += (t * t * (3 - 2 * t)) * plateauHeight;
   }
 
-  if (x > 230) {
-    const peakHeight = 40;
-    const pt = (x - 230) / 70;
-    y += pt * pt * peakHeight;
-  }
+  // Removed peak generation (x > 230)
 
   for (const pond of PONDS) {
     const dist = Math.sqrt((x - pond.x) ** 2 + (z - pond.z) ** 2);
@@ -55,10 +51,10 @@ export function isInsideAnyPond(x, z, margin = 0) {
 
 export function isOnCliff(x, z) {
   const cliffNoise = Math.sin(z * 0.05) * 8 + Math.cos(z * 0.1) * 4;
-  const cliffEdge = 160 + cliffNoise;
+  const cliffEdge = 120 + cliffNoise;
   const passZ = 60;
   const distToPass = Math.abs(z - passZ);
-  const rampWidth = distToPass < 40 ? 12 + (1 - distToPass / 40) * 50 : 12;
+  const rampWidth = distToPass < 40 ? 60 + (1 - distToPass / 40) * 50 : 60;
   return x > cliffEdge - 2 && x < cliffEdge + rampWidth + 2;
 }
 
@@ -173,61 +169,46 @@ export function createLandscape(env) {
 }
 
 function createBoundaryWalls(env) {
-  const WORLD_SIZE = 1200;
-  const wallHeight = 120;
-  const wallThickness = 20;
-  const wallColor = 0x4A4A4A;
-
-  // North wall (z = -WORLD_SIZE/2)
-  const northWall = new THREE.BoxGeometry(WORLD_SIZE + 40, wallHeight, wallThickness);
-  const wallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.8, metalness: 0.1 });
-  const nWall = new THREE.Mesh(northWall, wallMat);
-  nWall.position.set(0, wallHeight / 2, -WORLD_SIZE / 2 - wallThickness / 2);
-  nWall.receiveShadow = true;
-  nWall.castShadow = true;
-  env.scene.add(nWall);
-
-  // South wall (z = WORLD_SIZE/2)
-  const sWall = new THREE.Mesh(northWall, wallMat);
-  sWall.position.set(0, wallHeight / 2, WORLD_SIZE / 2 + wallThickness / 2);
-  sWall.receiveShadow = true;
-  sWall.castShadow = true;
-  env.scene.add(sWall);
-
-  // West wall (x = -WORLD_SIZE/2)
-  const eastWestWall = new THREE.BoxGeometry(wallThickness, wallHeight, WORLD_SIZE + 80);
-  const wWall = new THREE.Mesh(eastWestWall, wallMat);
-  wWall.position.set(-WORLD_SIZE / 2 - wallThickness / 2, wallHeight / 2, 0);
-  wWall.receiveShadow = true;
-  wWall.castShadow = true;
-  env.scene.add(wWall);
-
-  // East wall (x = WORLD_SIZE/2)
-  const eWall = new THREE.Mesh(eastWestWall, wallMat);
-  eWall.position.set(WORLD_SIZE / 2 + wallThickness / 2, wallHeight / 2, 0);
-  eWall.receiveShadow = true;
-  eWall.castShadow = true;
-  env.scene.add(eWall);
-
-  // Store boundary info in env for collision detection
+  // Store boundary info in env for collision detection (invisible walls)
+  // We use a large buffer so the player can't walk all the way to the 
+  // edge of the terrain plane, allowing the fog to hide the end of the world.
   env.worldBounds = {
     minX: -WORLD_SIZE / 2,
     maxX: WORLD_SIZE / 2,
     minZ: -WORLD_SIZE / 2,
     maxZ: WORLD_SIZE / 2,
-    buffer: 15,
+    buffer: 400,
   };
 }
 
 export function updateDayNight(env) {
-  const now = new Date();
-  const secondsSinceMidnight = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-  const dayProgress = secondsSinceMidnight / 86400;
+  // Hardcoded to noon (0.5) for testing purposes as requested
+  const dayProgress = 0.5;
+  const now = new Date(); // still needed for return object
+  
   const sunAngle = dayProgress * Math.PI * 2 - Math.PI / 2;
   const sunHeight = Math.sin(sunAngle);
   const t = Math.max(0, sunHeight);
 
-  env.dirLight.position.set(Math.cos(sunAngle) * -200, Math.sin(sunAngle) * 200, 100);
+  // Position Sun at a far distance so it appears in the sky behind the fog
+  const sunDist = 1200;
+  env.dirLight.position.set(Math.cos(sunAngle) * -sunDist, Math.sin(sunAngle) * sunDist, 100);
+  if (env.sunMesh) {
+    env.sunMesh.position.copy(env.dirLight.position);
+  }
+
+  // Moon is exactly opposite the sun
+  const moonAngle = sunAngle + Math.PI;
+  const moonHeight = Math.sin(moonAngle);
+  const mt = Math.max(0, moonHeight);
+  
+  if (env.moonLight) {
+    env.moonLight.position.set(Math.cos(moonAngle) * -sunDist, Math.sin(moonAngle) * sunDist, 100);
+    env.moonLight.intensity = Math.max(0.01, mt * 0.3); // Weaker light for the moon
+  }
+  if (env.moonMesh) {
+    env.moonMesh.position.copy(env.moonLight.position);
+  }
 
   const currentSky = new THREE.Color();
   if (sunHeight > 0.15) {
@@ -240,7 +221,10 @@ export function updateDayNight(env) {
 
   env.scene.background = currentSky;
   env.scene.fog.color.copy(currentSky);
-  env.dirLight.intensity = Math.max(0.05, t * 0.72);
-  env.ambientLight.intensity = 0.12 + t * 0.46;
+  
+  // Fade out sun light when moon is out, and vice versa
+  env.dirLight.intensity = Math.max(0.0, t * 0.68);
+  env.ambientLight.intensity = 0.12 + t * 0.46 + mt * 0.1;
+  
   return { now };
 }

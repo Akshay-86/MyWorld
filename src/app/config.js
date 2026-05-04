@@ -1,6 +1,6 @@
-export const WORLD_SIZE = 1200;
-export const NUM_HOUSES = 50;
-export const NUM_TREES = 1500;
+export const WORLD_SIZE = 1800;
+export const NUM_HOUSES = 100;
+export const NUM_TREES = 3500;
 
 export const PONDS = [
   { x: 0, z: 0, radius: 30, depth: 9 },
@@ -8,7 +8,14 @@ export const PONDS = [
   { x: -130, z: -90, radius: 25, depth: 8 },
   { x: 90, z: -160, radius: 18, depth: 6 },
   { x: -180, z: 130, radius: 22, depth: 7 },
-  { x: 145, z: -20, radius: 35, depth: 10 },
+  { x: 90, z: -20, radius: 35, depth: 10 },
+  // Ponds on the plateau (cliff)
+  { x: 280, z: 80, radius: 28, depth: 8 },
+  { x: 350, z: -150, radius: 22, depth: 7 },
+  { x: 220, z: 250, radius: 32, depth: 9 },
+  // Additional scattered ponds for the larger world
+  { x: -300, z: -250, radius: 20, depth: 6 },
+  { x: -350, z: 200, radius: 25, depth: 8 },
 ];
 
 export const ASSET_NAMES = {

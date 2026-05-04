@@ -35,12 +35,34 @@ export function createEnvironment() {
   dirLight.shadow.mapSize.width = 2048;
   dirLight.shadow.mapSize.height = 2048;
   dirLight.shadow.camera.near = 0.5;
-  dirLight.shadow.camera.far = 600;
-  dirLight.shadow.camera.left = -300;
-  dirLight.shadow.camera.right = 300;
-  dirLight.shadow.camera.top = 300;
-  dirLight.shadow.camera.bottom = -300;
+  dirLight.shadow.camera.far = 3000;
+  dirLight.shadow.camera.left = -500;
+  dirLight.shadow.camera.right = 500;
+  dirLight.shadow.camera.top = 500;
+  dirLight.shadow.camera.bottom = -500;
   scene.add(dirLight);
+
+  const moonLight = new THREE.DirectionalLight(0x88bbff, 0.0);
+  moonLight.castShadow = true;
+  moonLight.shadow.mapSize.width = 2048;
+  moonLight.shadow.mapSize.height = 2048;
+  moonLight.shadow.camera.near = 0.5;
+  moonLight.shadow.camera.far = 3000;
+  moonLight.shadow.camera.left = -500;
+  moonLight.shadow.camera.right = 500;
+  moonLight.shadow.camera.top = 500;
+  moonLight.shadow.camera.bottom = -500;
+  scene.add(moonLight);
+
+  const sunGeo = new THREE.SphereGeometry(60, 32, 32);
+  const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffee, fog: false });
+  const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+  scene.add(sunMesh);
+
+  const moonGeo = new THREE.SphereGeometry(40, 32, 32);
+  const moonMat = new THREE.MeshBasicMaterial({ color: 0xe0e0ff, fog: false });
+  const moonMesh = new THREE.Mesh(moonGeo, moonMat);
+  scene.add(moonMesh);
 
   const env = {
     scene,
@@ -49,6 +71,9 @@ export function createEnvironment() {
     controls,
     ambientLight,
     dirLight,
+    moonLight,
+    sunMesh,
+    moonMesh,
     keysPressed: {},
     terrainMesh: null,
     loadedModels: {},

@@ -2,8 +2,14 @@ import * as THREE from 'three';
 import { getTerrainHeight, updateDayNight } from './terrain.js';
 
 export function startAnimation(env) {
+  let lastTime = performance.now();
+
   function animate() {
     requestAnimationFrame(animate);
+
+    const timeNow = performance.now();
+    const dt = Math.min((timeNow - lastTime) / 1000, 0.1);
+    lastTime = timeNow;
 
     const { now } = updateDayNight(env);
     const time = now.getTime() * 0.001;
@@ -45,10 +51,20 @@ export function startAnimation(env) {
 
     env.controls.update();
 
-    env.humans.forEach((human, index) => {
-      const height = getTerrainHeight(human.position.x, human.position.z);
-      human.position.y = height + 0.7 + Math.sin(time * 2 + index) * 0.1;
-    });
+    if (env.instancedHumans && env.humanData) {
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < env.humanData.length; i++) {
+        const data = env.humanData[i];
+        const height = getTerrainHeight(data.x, data.z);
+        dummy.position.set(data.x, height + Math.sin(time * 2 + i) * 0.1, data.z);
+        dummy.rotation.set(0, data.rotY, 0);
+        dummy.scale.set(data.scale, data.scale, data.scale);
+        dummy.translateY(0.7); // apply vertical offset in local space
+        dummy.updateMatrix();
+        env.instancedHumans.setMatrixAt(i, dummy.matrix);
+      }
+      env.instancedHumans.instanceMatrix.needsUpdate = true;
+    }
 
     env.waterMeshes.forEach((water) => {
       const position = water.geometry.attributes.position;

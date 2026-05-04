@@ -79,6 +79,8 @@ export function createEnvironment() {
     loadedModels: {},
     waterMeshes: [],
     humans: [],
+    humanData: [],
+    instancedHumans: null,
     housePositions: [],
     placedObjects: [],
     fenceTransforms: [],

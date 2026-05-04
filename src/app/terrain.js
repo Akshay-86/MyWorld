@@ -182,9 +182,8 @@ function createBoundaryWalls(env) {
 }
 
 export function updateDayNight(env) {
-  // Hardcoded to noon (0.5) for testing purposes as requested
-  const dayProgress = 0.5;
-  const now = new Date(); // still needed for return object
+  const now = new Date();
+  const dayProgress = (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) / 86400;
   
   const sunAngle = dayProgress * Math.PI * 2 - Math.PI / 2;
   const sunHeight = Math.sin(sunAngle);

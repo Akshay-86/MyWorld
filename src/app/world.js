@@ -1,36 +1,30 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ASSET_NAMES, FLORA_CONFIG, NUM_HOUSES, NUM_TREES, WORLD_SIZE } from './config.js';
 import { getTerrainHeight, getYOnTerrain, isInsideAnyPond, isOnCliff } from './terrain.js';
 
-function createHouseFallback() {
-  const group = new THREE.Group();
-  const base = new THREE.Mesh(
-    new THREE.BoxGeometry(5, 4, 5),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
-  );
-  base.position.y = 2;
-  base.castShadow = true;
-  base.receiveShadow = true;
-  group.add(base);
-
-  const roofGeo = new THREE.ConeGeometry(4.5, 4, 4);
-  roofGeo.rotateY(Math.PI / 4);
-  const roof = new THREE.Mesh(roofGeo, new THREE.MeshStandardMaterial({ color: 0xE53935, roughness: 0.7 }));
-  roof.position.y = 6;
-  roof.castShadow = true;
-  group.add(roof);
-  return group;
-}
-
-function createHumanFallback() {
-  const human = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.3, 0.8, 4, 8),
-    new THREE.MeshStandardMaterial({ color: 0x1976D2, roughness: 0.5 }),
-  );
-  human.position.y = 0.7;
-  human.castShadow = true;
-  return human;
+function createInstancedFromGeometry(env, geometry, material, transforms, castShadow = true, offset = new THREE.Vector3()) {
+  const count = transforms.length;
+  if (count === 0) return null;
+  const instancedMesh = new THREE.InstancedMesh(geometry, material, count);
+  instancedMesh.castShadow = castShadow;
+  instancedMesh.receiveShadow = true;
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < count; i++) {
+    const t = transforms[i];
+    dummy.position.set(t.x, t.y, t.z);
+    dummy.rotation.set(0, t.rotY || 0, 0);
+    dummy.scale.set(t.scale || 1, t.scale || 1, t.scale || 1);
+    dummy.translateX(offset.x);
+    dummy.translateY(offset.y);
+    dummy.translateZ(offset.z);
+    dummy.updateMatrix();
+    instancedMesh.setMatrixAt(i, dummy.matrix);
+  }
+  instancedMesh.instanceMatrix.needsUpdate = true;
+  env.scene.add(instancedMesh);
+  return instancedMesh;
 }
 
 function checkCollision(env, x, z, radius) {
@@ -58,6 +52,9 @@ function createInstancedFromModel(env, modelScene, transforms, castShadow = true
     instancedMesh.castShadow = castShadow;
     instancedMesh.receiveShadow = true;
 
+    // Calculate a bounding sphere or box for the instanced mesh so Frustum Culling works optimally!
+    instancedMesh.frustumCulled = true;
+
     for (let i = 0; i < count; i++) {
       const transform = transforms[i];
       dummy.position.set(transform.x, transform.y, transform.z);
@@ -68,12 +65,31 @@ function createInstancedFromModel(env, modelScene, transforms, castShadow = true
     }
 
     instancedMesh.instanceMatrix.needsUpdate = true;
+    instancedMesh.computeBoundingSphere(); // Highly important for chunk culling
     env.scene.add(instancedMesh);
     instancedMeshes.push(instancedMesh);
   }
 
   return instancedMeshes;
 }
+
+function chunkAndInstantiate(env, modelScene, transforms, castShadow = true) {
+  const CHUNK_SIZE = 300;
+  const chunks = {};
+  
+  for (const t of transforms) {
+    const cx = Math.floor(t.x / CHUNK_SIZE);
+    const cz = Math.floor(t.z / CHUNK_SIZE);
+    const key = `${cx},${cz}`;
+    if (!chunks[key]) chunks[key] = [];
+    chunks[key].push(t);
+  }
+  
+  for (const key in chunks) {
+    createInstancedFromModel(env, modelScene, chunks[key], castShadow);
+  }
+}
+
 
 function createPathBetween(env, p1, p2) {
   const dx = p2.x - p1.x;
@@ -125,9 +141,7 @@ function createPathBetween(env, p1, p2) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
-  const road = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x5D4037, roughness: 1.0, side: THREE.DoubleSide }));
-  road.receiveShadow = true;
-  env.scene.add(road);
+  env.roadGeometries.push(geo);
 
   centerPoints.forEach((point) => {
     env.placedObjects.push({ x: point.x, z: point.z, radius: roadWidth + 1 });
@@ -258,8 +272,11 @@ async function loadModels(env) {
 }
 
 function spawnWorld(env) {
+  const houseTransforms = [];
+  env.humanData = [];
+  env.roadGeometries = [];
+
   for (let i = 0; i < NUM_HOUSES; i++) {
-    const house = createHouseFallback();
     let x;
     let z;
     let attempts = 0;
@@ -272,9 +289,9 @@ function spawnWorld(env) {
     if (attempts < 80) {
       env.placedObjects.push({ x, z, radius: 8 });
       const y = getTerrainHeight(x, z) - 0.1;
-      house.position.set(x, y, z);
-      house.rotation.y = Math.random() * Math.PI * 2;
-      env.scene.add(house);
+      const rotY = Math.random() * Math.PI * 2;
+      
+      houseTransforms.push({ x, y, z, rotY, scale: 1 });
       env.housePositions.push({ x, y, z });
 
       const spacing = 5;
@@ -286,14 +303,11 @@ function spawnWorld(env) {
       });
 
       for (let j = 0; j < 3; j++) {
-        const human = createHumanFallback();
         const angle = Math.random() * Math.PI * 2;
         const distance = 4 + Math.random() * 2;
         const humanX = x + Math.cos(angle) * distance;
         const humanZ = z + Math.sin(angle) * distance;
-        human.position.set(humanX, getTerrainHeight(humanX, humanZ), humanZ);
-        env.scene.add(human);
-        env.humans.push(human);
+        env.humanData.push({ x: humanX, y: getTerrainHeight(humanX, humanZ), z: humanZ, rotY: angle, scale: 1 });
       }
     }
   }
@@ -317,6 +331,29 @@ function spawnWorld(env) {
   }
 
   createPathBetween(env, { x: 20, z: 60 }, { x: 220, z: 60 });
+
+  // Instantiate Houses
+  const houseBaseGeo = new THREE.BoxGeometry(5, 4, 5);
+  const houseBaseMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+  createInstancedFromGeometry(env, houseBaseGeo, houseBaseMat, houseTransforms, true, new THREE.Vector3(0, 2, 0));
+
+  const houseRoofGeo = new THREE.ConeGeometry(4.5, 4, 4);
+  houseRoofGeo.rotateY(Math.PI / 4);
+  const houseRoofMat = new THREE.MeshStandardMaterial({ color: 0xE53935, roughness: 0.7 });
+  createInstancedFromGeometry(env, houseRoofGeo, houseRoofMat, houseTransforms, true, new THREE.Vector3(0, 6, 0));
+
+  // Instantiate Humans
+  const humanGeo = new THREE.CapsuleGeometry(0.3, 0.8, 4, 8);
+  const humanMat = new THREE.MeshStandardMaterial({ color: 0x1976D2, roughness: 0.5 });
+  env.instancedHumans = createInstancedFromGeometry(env, humanGeo, humanMat, env.humanData, true, new THREE.Vector3(0, 0.7, 0));
+
+  // Merge and create Roads
+  if (env.roadGeometries.length > 0) {
+    const mergedGeo = BufferGeometryUtils.mergeGeometries(env.roadGeometries, false);
+    const road = new THREE.Mesh(mergedGeo, new THREE.MeshStandardMaterial({ color: 0x5D4037, roughness: 1.0, side: THREE.DoubleSide }));
+    road.receiveShadow = true;
+    env.scene.add(road);
+  }
 }
 
 function hideLoadingScreen() {
@@ -334,14 +371,14 @@ export async function loadAndPopulateWorld(env) {
   const treeTransforms = generateTreeTransforms(env);
   for (const key of Object.keys(treeTransforms)) {
     if (env.loadedModels[key] && treeTransforms[key].length > 0) {
-      createInstancedFromModel(env, env.loadedModels[key], treeTransforms[key], true);
+      chunkAndInstantiate(env, env.loadedModels[key], treeTransforms[key], true);
     }
   }
 
   for (const config of FLORA_CONFIG) {
     if (!env.loadedModels[config.key]) continue;
     const transforms = generateScatterTransforms(env, config.count, config.scaleMin, config.scaleMax);
-    createInstancedFromModel(env, env.loadedModels[config.key], transforms, false);
+    chunkAndInstantiate(env, env.loadedModels[config.key], transforms, false);
   }
 
   if (env.loadedModels.fence && env.fenceTransforms.length > 0) {
